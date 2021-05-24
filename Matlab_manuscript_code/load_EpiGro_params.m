@@ -15,9 +15,7 @@
 function params_out = load_EpiGro_params()
 
 
-% data = csvread('state_parameters_case_counts_5-17.csv',1,1);
 data = csvread('state_parameters_case_counts_4-27.csv',1,1);
-% data = csvread('state_parameters_case_counts_new.csv',1,1); 
 
 % cols:   1,  beta_min	
 %         2,  beta_max	
@@ -35,16 +33,7 @@ data = csvread('state_parameters_case_counts_4-27.csv',1,1);
 %         14, T_start	
 %         15, T_end	
 
-
-% Old states included in prior
-% early_state_rows = [23,50,33,5,31,10,14,11,19,22,44,6,39,...
-%                     7, 36, 34, 45, 51];
-
-% 6/21/20 updated states included in prior -- Hannah's list of state
-% numbers
-% early_state_rows = [23,49,33,5,31,10,14,11,19,22,44,6,29,...
-%                     7,36,34,45,51,18,21,15,42,3];
-%                 
+                
 
 % 6/21/20 states with at least 1000 cases before April 1st
 %       **verified state numbers against the state_parameters file

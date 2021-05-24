@@ -17,7 +17,7 @@
 tic
 
 %% Define general setting for forecasting
-K_choices = [3,5,14];%[4,7,14]; % number of observations to fit forecasts
+K_choices = [3,5,14]; % number of observations to fit forecasts
 n_samps = 50; % ensemble members per choice of K
 save_raw = false; % save day ahead forecast ensemble?
 t_G_fig = false; % plot forecast ensemble against data in time incidence plane
@@ -28,42 +28,24 @@ save_params = true; % save parameter values to csv in "forecast_parameters"
 
 %% Choose state
 state_list = load_state_list(); % cell array of US state abbreviations
-state_C0s = csvread('state_C0s.csv',1,1);
-state_numS = 1:52;
+state_numS = 1;
 
 
 
 for state_num = state_numS  %19,25
 
 state_id = state_list{state_num};
-num_days =3;
 
 
-% 
-% all_forecast_dates = {'2020-04-12','2020-04-19','2020-04-26',...
-%                       '2020-05-03','2020-05-10','2020-05-17',...
+% all_forecast_dates = {'2020-05-03','2020-05-10','2020-05-17',...
 %                       '2020-05-24','2020-05-31','2020-06-07',...
 %                       '2020-06-14','2020-06-21','2020-06-28',...
-%                       '2020-07-05'};
-% 
-all_forecast_dates = {...'2020-04-12','2020-04-19',
-    '2020-04-26',...
-                      '2020-05-03','2020-05-10','2020-05-17',...
-                      '2020-05-24','2020-05-31','2020-06-07',...
-                      '2020-06-14','2020-06-21','2020-06-28',...
-                      '2020-07-05','2020-07-12','2020-07-19',...
-                      '2020-07-26','2020-08-02','2020-08-09',...
-                      '2020-08-16','2020-08-23','2020-08-30',...
-                      '2020-09-06','2020-09-13'};
+%                       '2020-07-05','2020-07-12','2020-07-19',...
+%                       '2020-07-26','2020-08-02','2020-08-09',...
+%                       '2020-08-16','2020-08-23','2020-08-30',...
+%                       '2020-09-06','2020-09-13'};
 
-
-% all_forecast_dates = {'2020-04-10','2020-04-17','2020-04-24',...
-%                       '2020-05-01','2020-05-08','2020-05-15',...
-%                       '2020-05-22','2020-05-29','2020-06-05',...
-%                       '2020-06-12','2020-06-19','2020-06-26',...
-%                       '2020-07-03'};
-                  
-%  all_forecast_dates = {'2021-03-14'};
+ all_forecast_dates = {'2020-05-03'};                 
                   
 num_weeks = length(all_forecast_dates);
 
@@ -120,32 +102,15 @@ targetsToSave = {'G','DG'};
 
 %% Optional: Plot quantiles against any available data
 
-% 
-% plotQuantilesWithTruth(state_id,last_day,forecast_date,shift,'G')
-% plotQuantilesWithTruth(state_id,last_day,forecast_date,shift,'DG')
+
+plotQuantilesWithTruth(state_id,last_day,forecast_date,shift,'G')
+plotQuantilesWithTruth(state_id,last_day,forecast_date,shift,'DG')
 % plotQuantilesWithTruth(state_id,last_day,forecast_date,shift,'C')
 % plotQuantilesWithTruth(state_id,last_day,forecast_date,shift,'DC')
-% plotQuantilesWithTruth(state_id,last_day,forecast_date,shift,'HG')
-% plotQuantilesWithTruth(state_id,last_day,forecast_date,shift,'HC')
 
 
 %% Optional: Plot quantiles in ICC plane
-% plotICCQuantilesWithTruth(state_id,last_day,K_choices,forecast_date,'G')
 % plotICCpresentation_v2(state_id, last_day, K_choices, forecast_date, 'G')
-%% Optional: Score quantiles against any available data
-
-% score_forecasts(forecast_date,state_id,'DC');
-% score_forecasts(forecast_date,state_id,'C');
-% score_forecasts(forecast_date,state_id,'DG');
-% score_forecasts(forecast_date,state_id,'G');
-
-
-%% Optional: Score weekly forecasts
-% score_weekly_incidence(forecast_date,state_id,'DG')
-% score_weekly_incidence(forecast_date,state_id,'G')
-%% Next steps?
-% Save forecasts in specified format in R
-
 end
 
 end
