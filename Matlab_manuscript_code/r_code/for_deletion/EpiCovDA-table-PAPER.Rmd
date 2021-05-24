@@ -1,0 +1,170 @@
+---
+title: "EpiCovDA - Red/Green Table Simplified"
+output:
+  pdf_document: 
+    keep_tex: true
+  html_notebook: default
+---
+
+Updated 04/02/21    \,   HRB
+
+Updated 04/11/21  \, Scores include Puerto Rico, make table per 100,000, and include US scores
+
+```{r load-packages, echo=FALSE, message=FALSE,warning=FALSE}
+library(tidyverse,quietly = TRUE,warn.conflicts=FALSE,verbose=FALSE)
+library(knitr,quietly=TRUE,warn.conflicts = FALSE)
+library(kableExtra,quietly=TRUE)
+```
+
+
+
+```{r import-version-scores,echo=FALSE}
+source('forecast_performance_functions_PAPER.R')
+
+JHU_EpiCovDA = read.csv('UA-EpiCovDA-v3-alphaData-tube1-prior-2020-11-09-JHU-PAPER/JHU_all_scores.csv')
+COVIDtracker_COVIDhub_ensemble = read.csv('COVIDhub-ensemble-comp-PR/CTP_all_scores.csv')
+JHU_COVIDhub_ensemble = read.csv('COVIDhub-ensemble-dates/JHU_all_scores.csv')
+COVIDtracker_EpiCovDA = read.csv('UA-EpiCovDA-v3-alphaData-tube1-prior-2020-11-16-PAPER/CTP_all_scores.csv')
+JHU_alignonly = read.csv('UA-EpiCovDA-v3-alphaData-tube1-prior-2020-11-16-alignJHU-PAPER/JHU_all_scores.csv')
+
+
+```
+
+
+
+```{r attachPop-function}
+
+attachPop <- function(forecast_df){
+  forecast_df$population <- NA
+  
+  for (loc in unique(forecast_df$location)){
+    if (loc == "US"){
+      temp_pop <- as.numeric(read.csv("../state_hosp_data_2020-11-16/state_popUS.csv"))
+      forecast_df[which(forecast_df$location=="US"),"population"] <- temp_pop
+    } else {
+
+          temp_pop <- as.numeric(read.csv(sprintf("../state_hosp_data_2020-11-16/state_pop%s.csv",
+                                                  loc)))
+      forecast_df[which(forecast_df$location==loc),"population"] <- temp_pop
+    }
+
+    
+  }
+  return(forecast_df)
+}
+
+
+```
+
+
+```{r attach-pop-to-dataframe}
+
+
+JHU_EpiCovDA = attachPop(JHU_EpiCovDA)
+COVIDtracker_COVIDhub_ensemble = attachPop(COVIDtracker_COVIDhub_ensemble)
+JHU_COVIDhub_ensemble = attachPop(JHU_COVIDhub_ensemble)
+COVIDtracker_EpiCovDA = attachPop(COVIDtracker_EpiCovDA )
+JHU_alignonly = attachPop(JHU_alignonly)
+
+
+```
+
+
+```{r}
+median_abs_pop_temp <- function(df,val,tar = c("1 wk ahead cum death", "2 wk ahead cum death",
+                                      "3 wk ahead cum death","4 wk ahead cum death")){
+  
+  print(droplevels(subset(df,target %in% tar,select=val)))
+  
+  return(median(abs(df[df$target %in% tar,val])/df[df$target %in% tar,"population"]*10^5))
+  
+}
+```
+
+
+
+
+```{r make-comparison-table, echo=FALSE }
+
+
+# statistics <- c("Mean Absolute Error",
+#                "Median Absolute Error",
+#                "Mean Absolute Relative Error",
+#                "Median Absolute Relative Error",
+#                "Mean 1 Wk Ahead Absolute Error",
+#                "Median 1 Wk Ahead Absolute Error",
+#                "Mean 2 Wk Ahead Absolute Error",
+#                "Median 2 Wk Ahead Absolute Error",
+#                "Mean 3 Wk Ahead Absolute Error",
+#                "Median 3 Wk Ahead Absolute Error",
+#                "Mean 4 Wk Ahead Absolute Error",
+#                "Median 4 Wk Ahead Absolute Error",
+#                "Mean 1 Wk Ahead Absolute Relative Error",
+#                "Median 1 Wk Ahead Absolute Relative Error",
+#                "Mean 2 Wk Ahead Absolute Relative Error",
+#                "Median 2 Wk Ahead Absolute Relative Error",
+#                "Mean 3 Wk Ahead Absolute Relative Error",
+#                "Median 3 Wk Ahead Absolute Relative Error",
+#                "Mean 4 Wk Ahead Absolute Relative Error",
+#                "Median 4 Wk Ahead Absolute Relative  Error")
+
+
+statistics <- c("MAE, overall",
+               "MedAE, overall",
+               "MARE, overall",
+               "MedARE, overall",
+               "MAE, 1 wk",
+               "MedAE, 1 wk",
+               "MAE, 2 wk",
+               "MedAE, 2 wk",
+               "MAE, 3 wk",
+               "MedAE, 3 wk",
+               "MAE, 4 wk",
+               "MedAE, 4 wk",
+               "Mean 1 Wk Ahead Absolute Relative Error",
+               "Median 1 Wk Ahead Absolute Relative Error",
+               "Mean 2 Wk Ahead Absolute Relative Error",
+               "Median 2 Wk Ahead Absolute Relative Error",
+               "Mean 3 Wk Ahead Absolute Relative Error",
+               "Median 3 Wk Ahead Absolute Relative Error",
+               "Mean 4 Wk Ahead Absolute Relative Error",
+               "Median 4 Wk Ahead Absolute Relative  Error")
+point_scores_comparison <- data.frame( Statistic= statistics,
+                                       EpiCovDA_CTP =
+                                          calculatePerformanceStatisticsByPop(
+                                            COVIDtracker_EpiCovDA)[["death_stats"]],
+                                       EpiCovDA_JHU =
+                                        calculatePerformanceStatisticsByPop(JHU_EpiCovDA)[["death_stats"]],
+                                      EpiCovDA_JHUalignonly = 
+                                        calculatePerformanceStatisticsByPop(JHU_alignonly)[["death_stats"]],
+                                      COVIDhub = 
+                                          calculatePerformanceStatisticsByPop(
+                                            JHU_COVIDhub_ensemble)[["death_stats"]],
+                                      COVIDhub_CTPalign =
+                                        calculatePerformanceStatisticsByPop(
+                                          COVIDtracker_COVIDhub_ensemble)[["death_stats"]]
+                                      ) 
+
+
+
+
+names(point_scores_comparison) <- c("Statistic","EpiCovDA - CTP","EpiCovDA - JHU", "EpiCovDA - JHU for alignment only", "COVIDhub Ensemble - as published", "COVIDhub Ensemble - CTP for alignment")
+
+
+```
+
+
+
+```{r point-score-comp, results="asis"}
+kable(point_scores_comparison[c(1:2,5:12),], booktabs=TRUE,longtable=FALSE, row.names = FALSE,
+      caption = "Comparison of point forecasts generated with different data sources.",
+      digits = c(0,2,2,2,2,2),
+      align = "lccccc") %>%
+  kable_styling(full_width = TRUE,latex_options = "repeat_header") %>%
+  add_header_above(c(" " = 1, "Model with Data Source" = 5))
+  
+```
+
+
+
+

@@ -1,0 +1,965 @@
+---
+title: "EpiCovDA Figures"
+output:
+  pdf_document: 
+    keep_tex: true
+  html_notebook: default
+---
+
+Created 2/22/21 \, HRB
+
+Updated 3/9/21 \, Switched COVID Tracking Project Truth to download from 11/16/2020
+
+Updated 4/11/21 \, Use results which include PR
+
+
+## Read in forecasts and attach truth 
+
+```{r setup, echo=FALSE,warning=FALSE,message=FALSE}
+
+# getwd()
+
+library("cdlTools",quietly = TRUE) # package to convert fips to state abbreviations
+library(ggnewscale,quietly = TRUE)
+library(tidyverse,quietly = TRUE,warn.conflicts=FALSE)
+library(covidcast,quietly = TRUE)
+library(MMWRweek,quietly = TRUE)
+library(knitr, quietly = TRUE)
+library(ggplot2,quietly = TRUE)
+
+
+# EpiCovDA Forecasts - CTP
+forecasts_with_truth = read.csv("UA-EpiCovDA-v3-alphaData-tube1-prior-2020-11-16-PAPER/forecasts_with_truth-UA-EpiCovDA-CTP.csv")
+EpiCovDA_pt_scores = read.csv("UA-EpiCovDA-v3-alphaData-tube1-prior-2020-11-16-PAPER/CTP_all_scores.csv")
+
+EpiCovDA_pt_scores = subset(EpiCovDA_pt_scores,as.Date(forecast_date)>= as.Date("2020-05-01"))
+forecasts_with_truth = subset(forecasts_with_truth,as.Date(forecast_date)>= as.Date("2020-05-01"))
+
+
+```
+
+
+```{r}
+myfips<-function(fips_codes,to="Abbreviation"){
+  fips_abbrev <- fips_codes
+  fips_abbrev[fips_codes!="US"] <- fips(fips_codes[fips_codes!="US"],to="Abbreviation") 
+  fips_abbrev[fips_codes=="US"] <- " US"
+  
+  return(fips_abbrev)
+  
+}
+```
+
+
+
+## Calculate interval scores for a specified level (alpha)
+
+$$ \text{IS}_{\alpha}(F,y) = (u - \ell) + \frac{2}{\alpha} (\ell - y) \mathbf{1}(\ell > y) + \frac{2}{\alpha}(y - u)\mathbf{1}(u < y)$$
+
+
+```{r define-getIntervalScores-function, echo=FALSE}
+getIntervalScores <- function(forecasts_with_truth,alpha_level){
+
+  upperbounds = subset(forecasts_with_truth,quantile ==(1-alpha_level/2),
+                       select="value" )
+  
+  lowerbounds = subset(forecasts_with_truth,quantile ==(alpha_level/2),
+                       select="value" )
+  
+  truths =  subset(forecasts_with_truth,quantile ==(alpha_level/2),
+                       select="truth" )
+  
+  interval_scores = (upperbounds-lowerbounds) + 
+                    2/alpha_level * (lowerbounds-truths)*
+                          (lowerbounds>truths) + 
+                    2/alpha_level * (truths-upperbounds)*(upperbounds<truths)
+  
+  IS_df = subset(forecasts_with_truth,quantile ==(alpha_level/2),
+                       select=c("forecast_date","target","target_end_date",
+                                "location","truth") )
+  
+  IS_df$interval_score = interval_scores$value
+  
+  return(IS_df)
+}
+```
+
+
+
+
+## Calculate Weighted Interval Score (WIS)
+
+$$ \text{WIS}_{\alpha_0 : K}(F,y) = \frac{1}{K+1/2}\left(w_0 \, |y-m| + \sum_{k=1}^K w_k \, \text{IS}_{\alpha_k}(F,y)\right) $$
+where $w_0 = \frac 1 2$ and $w_k = \frac{\alpha_k}{2}$ for $k = 1,\hdots, K$ for $\alpha= 0.02, 0.05, 0.1, 0.2, \hdots, 0.9$.  
+
+
+
+```{r define-getWIS-function}
+getWIS <- function(forecasts_with_truth){
+
+
+  
+  w0 = 0.5
+  f_medians =  subset(forecasts_with_truth,quantile ==0.5,
+                       select="value" )
+  truth_y = subset(forecasts_with_truth,quantile ==0.5,
+                       select="truth" )
+  WIS <- w0*abs(truth_y-f_medians)
+  
+  for (alpha_level in c(0.02,0.05,0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9)){
+    wk = alpha_level/2
+    temp_IS <- getIntervalScores(forecasts_with_truth,alpha_level)
+    
+    WIS <- WIS + wk*temp_IS$interval_score
+    
+  }
+  
+    WIS_temp_df <- subset(forecasts_with_truth,quantile ==0.5,
+                       select=c("forecast_date","target","target_end_date",
+                                "location","truth") )
+    WIS_temp_df$WIS <- WIS$truth
+  
+  
+ 
+  
+  return(WIS_temp_df)
+}
+```
+
+
+
+
+```{r calculate-model-WIS}
+EpiCovDA_WIS <- getWIS(forecasts_with_truth)
+
+EpiCovDA_WIS$IS_05 <- getIntervalScores(forecasts_with_truth, 0.05)$interval_score
+
+EpiCovDA_WIS$IS_50 <- getIntervalScores(forecasts_with_truth, 0.5)$interval_score
+
+```
+
+
+# Attach state population
+
+
+```{r}
+EpiCovDA_WIS$population <- NA
+EpiCovDA_pt_scores$population <- NA
+
+
+
+for (loc in unique(EpiCovDA_WIS$location)){
+  if (loc == "US"){
+    temp_pop <- as.numeric(read.csv("../state_hosp_data_2020-11-16/state_popUS.csv"))
+    EpiCovDA_WIS[which(EpiCovDA_WIS$location=="US"),"population"] <- temp_pop
+    EpiCovDA_pt_scores[which(EpiCovDA_pt_scores$location == "US"),"population"] <- temp_pop
+
+    
+  } else {
+
+        temp_pop <- as.numeric(read.csv(sprintf("../state_hosp_data_2020-11-16/state_pop%s.csv",fips(loc, to = "Abbreviation"))))
+    EpiCovDA_WIS[which(EpiCovDA_WIS$location==loc),"population"] <- temp_pop
+    EpiCovDA_pt_scores[which(EpiCovDA_pt_scores$location == fips(loc, to = "Abbreviation")),"population"] <- temp_pop
+
+  
+  }
+  
+  
+}
+
+
+
+
+```
+
+
+
+
+```{r define-statsOnPerformance-function}
+statsOnPerformance <- function(all_IS,column,tar_type = "death",filterdates_TF = TRUE,
+                               includeUS = FALSE,
+                               USonly = FALSE){
+  
+  all_targets <- c("1 wk ahead cum death","2 wk ahead cum death","3 wk ahead cum death",
+                   "4 wk ahead cum death")
+  
+  if (tar_type == "case"){
+    all_targets <- c("1 wk ahead cum case","2 wk ahead cum case",
+                     "3 wk ahead cum case",
+                     "4 wk ahead cum case")
+  }
+  
+  
+  
+  if (filterdates_TF){
+    all_IS <- subset(all_IS,(as.Date(forecast_date)>as.Date("2020-04-19")))
+    
+  }
+  
+  if (!includeUS){
+    subset(all_IS,(location!="US"))
+  }
+  
+  if (USonly){
+    all_IS <- subset(all_IS,(location=="US"))
+  }
+
+
+  
+  stats_df <- data.frame()
+  
+  temp_df <- data.frame(target = "Overall",mean = mean(all_IS[grepl(tar_type,all_IS$target),column]),
+                        median = median(all_IS[grepl(tar_type,all_IS$target),column]))
+  
+  stats_df <- rbind(stats_df,temp_df)
+  
+  
+  
+  for (tar in all_targets){
+    curr_subset <- subset(all_IS,target == tar)
+    curr_mean <- mean(curr_subset[,column])
+    curr_median <- median(curr_subset[,column])
+    temp_df <- data.frame(target = tar, mean = curr_mean,median = curr_median)
+    
+    stats_df <- rbind(stats_df,temp_df)
+  }
+  
+  return(stats_df)
+}
+```
+
+
+
+
+
+```{r}
+IS_stats_EpiCovDA <- statsOnPerformance(EpiCovDA_WIS,"WIS")
+```
+
+
+
+```{r}
+# kable(IS_stats_EpiCovDA,booktabs=TRUE)
+# kable(IS_stats_COVIDhub,booktabls=TRUE)
+```
+
+
+
+# Point Scores
+
+
+```{r}
+EpiCovDA_pt_scores$abs_error <- abs(EpiCovDA_pt_scores$error)
+
+EpiCovDA_pt_stats <- statsOnPerformance(EpiCovDA_pt_scores,"abs_error")
+
+```
+
+
+# Plot IS_alpha
+
+```{r}
+
+
+
+ggplot()+
+  geom_line(data=EpiCovDA_WIS[(EpiCovDA_WIS$target=="1 wk ahead cum death")&(EpiCovDA_WIS$location=="US"),],
+            mapping=aes(x=as.Date(forecast_date),y=IS_05,group=location))
+
+
+
+ggplot()+
+    geom_line(data=subset(
+                EpiCovDA_pt_scores[grepl("death",EpiCovDA_pt_scores$target),],location=="US"),
+            mapping=aes(x=as.Date(forecast_date),y=abs_error,group=target,color=target))
+
+
+```
+
+
+```{r}
+IS_deaths_df <- EpiCovDA_WIS[grepl("death",EpiCovDA_WIS$target),]
+
+
+thisfilename <- "results_figures/US_IS.pdf"
+
+pdf(thisfilename, width = 10, height = 6)
+a3 <- ggplot()+
+  geom_line(data=IS_deaths_df[(IS_deaths_df$location=="US"),],
+            mapping=aes(x=as.Date(forecast_date),y=IS_05,group=target,color=target))+
+  xlab("Forecast Date")+ylab("Interval Score")+ggtitle("Interval Scores for US Death Forecasts")+
+    scale_color_discrete(name="Target",labels = c("1 wk ahead cmltv deaths","2 wk ahead cmltv deaths","3 wk ahead cmltv deaths","4 wk ahead cmltv deaths"))+
+  theme(text = element_text(size = 16))
+print(a3)
+dev.off()
+
+```
+
+
+# Death Results: Week ahead interval score figures
+
+
+Per 100,000 population
+
+Max IS_05/population*10^5 is about 677
+
+```{r deaths-IS}
+
+# for (i in 1:4){
+
+
+mybreaks = c(0,1,5,10,25,50,100,500,Inf)
+mylabels = c("<1","1 <= x < 5", "5 <= x < 10", "10 <= x < 25","25 <= x < 50","50 <= x < 100", "100 <= x < 500",">=500")
+
+figfilename3 <- sprintf("results_figures/IS_epicovda_deaths.pdf")
+
+pdf(figfilename3, width = 10, height = 7)
+p1 <- ggplot()+
+  geom_tile(data = IS_deaths_df,
+            mapping =
+              aes(as.Date(forecast_date),
+                  myfips(as.character(location),to="Abbreviation"),
+                  fill=cut(IS_05/population*10^5,breaks=mybreaks,right=FALSE,labels=mylabels))) +
+  # scale_fill_gradient2(low = "white",high="firebrick3",mid="gold",trans="log10",midpoint=1,
+  #                     breaks=mybreaks,labels=mybreaks)+
+  scale_fill_brewer(type="seq",palette = "YlOrRd")+
+  theme_bw()+
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())+
+  xlab("Forecast Date")+ylab("State")+
+  ggtitle("EpiCovDA Interval Scores (alpha=0.05) for Death Forecasts")+
+  # ggtitle(sprintf("EpiCovDA, %s wk ahead cumulative deaths",i))+
+  labs(fill="IS per 100,000")+
+  facet_wrap(vars(target),scales="fixed",nrow=1)
+print(p1)
+dev.off()
+print(p1)
+
+# }
+
+# max(IS_deaths_df$IS_05/IS_deaths_df$population*10^5)
+
+
+```
+
+
+# Point Estimate Errors
+
+Max cumulative deaths for 4 week ahead forecasts: about 28.9 per 100,000
+
+```{r AE-deaths1}
+
+mybreaks2 <- c(0,.5,1,5,10,15,25,Inf)
+mylabels2 = c("<0.5","0.5 <= x < 1","1 <= x < 5", "5 <= x < 10", "10 <= x < 15","15 <= x < 25",">=25")
+
+
+
+figfilename1 <- sprintf("results_figures/AE_epicovda_deaths.pdf")
+
+
+
+
+pdf(figfilename1, width = 10, height = 7)
+p3<- ggplot()+
+  geom_tile(data = EpiCovDA_pt_scores[grepl("death",EpiCovDA_pt_scores$target),],
+            mapping =
+              aes(as.Date(forecast_date),
+                  myfips(as.character(location),to="Abbreviation"),
+                  fill=   cut(abs_error/population*10^5,breaks=mybreaks2,right=FALSE,labels=mylabels2) )) +
+  # scale_fill_gradient2(low = "white",mid="gold",high="firebrick3",
+  #                      trans="log10",midpoint = log10(.5),na.value = "white",breaks=mybreaks2,
+  #                      labels=mybreaks2)+
+  scale_fill_brewer(type="seq",palette = "YlOrRd")+
+  theme_bw()+
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())+
+  xlab("Forecast Date")+ylab("State")+ggtitle("EpiCovDA Absolute Error per 100,000 for Death Forecasts") +
+  labs(fill="Abs. Error per 100,000")+
+  facet_wrap(vars(target),scales="fixed",nrow=1)
+print(p3)
+dev.off()
+print(p3)
+
+
+
+
+# max(EpiCovDA_pt_scores[(EpiCovDA_pt_scores$target==sprintf("%s wk ahead cum death",j)),"abs_error"]/EpiCovDA_pt_scores[(EpiCovDA_pt_scores$target==sprintf("%s wk ahead cum death",j)),"population"]*10^5)
+```
+
+
+
+## "Heatmaps" for Cases 
+
+max IS for cases about 23752
+mediant IS for cases about 193
+
+```{r cases-IS}
+
+# for (i in 1:4){
+
+
+mybreaks = c(0,5,25,100,300,1000,5000,10000,Inf)
+mylabels = c("<5","5 <= x < 25", "25 <= x < 100", "100 <= x < 300","300 <= x < 1000","1000 <= x < 5000", "5000 <= x < 10000",">=10000")
+
+figfilename3 <- sprintf("results_figures/IS_epicovda_cases.pdf")
+
+pdf(figfilename3, width = 10, height = 7)
+p1 <- ggplot()+
+  geom_tile(data = EpiCovDA_WIS[grepl("case",EpiCovDA_WIS$target),],
+            mapping =
+              aes(as.Date(forecast_date),
+                  myfips(as.character(location),to="Abbreviation"),
+                  fill=cut(IS_05/population*10^5,breaks=mybreaks,right=FALSE,labels=mylabels))) +
+  # scale_fill_gradient2(low = "white",high="firebrick3",mid="gold",trans="log10",midpoint=1,
+  #                     breaks=mybreaks,labels=mybreaks)+
+  scale_fill_brewer(type="seq",palette = "YlOrRd")+
+  theme_bw()+
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())+
+  xlab("Forecast Date")+ylab("State")+
+  ggtitle("EpiCovDA Interval Scores (alpha=0.05) for Case Forecasts")+
+  # ggtitle(sprintf("EpiCovDA, %s wk ahead cumulative deaths",i))+
+  labs(fill="IS per 100,000")+
+  facet_wrap(vars(target),scales="fixed",nrow=1)
+print(p1)
+dev.off()
+print(p1)
+
+# }
+
+# median(EpiCovDA_WIS[grepl("case",EpiCovDA_WIS$target),"IS_05"]/EpiCovDA_WIS[grepl("case",EpiCovDA_WIS$target),"population"]*10^5)
+
+
+```
+
+
+# Point Estimate Errors
+
+Max cumulative deaths for 4 week ahead forecasts: about 867 per 100,000
+median about 67
+
+```{r AE-deaths}
+
+mybreaks2 <- c(0,1,10,25,50,100,300,500,Inf)
+mylabels2 = c("<1","1 <= x < 10","10 <= x < 25", "25 <= x < 50", "50 <= x < 100","100 <= x < 300",
+              "300 <= x < 500",">=500")
+
+
+
+figfilename1 <- sprintf("results_figures/AE_epicovda_cases.pdf")
+
+
+
+
+pdf(figfilename1, width = 10, height = 7)
+p3<- ggplot()+
+  geom_tile(data = EpiCovDA_pt_scores[grepl("case",EpiCovDA_pt_scores$target),],
+            mapping =
+              aes(as.Date(forecast_date),
+                  myfips(as.character(location),to="Abbreviation"),
+                  fill=   cut(abs_error/population*10^5,breaks=mybreaks2,right=FALSE,labels=mylabels2) )) +
+  # scale_fill_gradient2(low = "white",mid="gold",high="firebrick3",
+  #                      trans="log10",midpoint = log10(.5),na.value = "white",breaks=mybreaks2,
+  #                      labels=mybreaks2)+
+  scale_fill_brewer(type="seq",palette = "YlOrRd")+
+  theme_bw()+
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())+
+  xlab("Forecast Date")+ylab("State")+ggtitle("EpiCovDA Absolute Error per 100,000 for Case Forecasts") +
+  labs(fill="Abs. Error per 100,000")+
+  facet_wrap(vars(target),scales="fixed",nrow=1)
+print(p3)
+dev.off()
+print(p3)
+
+
+
+
+# median(EpiCovDA_pt_scores[(EpiCovDA_pt_scores$target==sprintf("%s wk ahead cum case",4)),"abs_error"]/EpiCovDA_pt_scores[(EpiCovDA_pt_scores$target==sprintf("%s wk ahead cum case",4)),"population"]*10^5)
+
+```
+
+
+
+
+
+
+
+```{r}
+
+forecasted_locations = unique(forecasts_with_truth$location)
+
+tar_type = "case"
+
+for (loc in forecasted_locations){
+
+state_num = loc #"04"
+
+target_forecasts_with_truth <-
+  forecasts_with_truth[grepl(tar_type,
+                             forecasts_with_truth$target) &
+                         (forecasts_with_truth$location == state_num)&
+                         as.Date(forecasts_with_truth$forecast_date)
+                       >as.Date('2020-04-10'),]
+
+
+st_ab = fips(state_num,to="Abbreviation")
+
+if (loc == "US"){
+  st_ab = "US"
+}
+fcasts_wide <- as_tibble(target_forecasts_with_truth) %>%
+    filter(quantile %in% c(0.025, 0.1, 0.25, 0.5, 0.75, 0.9, 0.975)) %>%
+    mutate(week_ahead = as.numeric(substr(target, 0,2))) %>%
+    pivot_wider(names_from = quantile, names_prefix="q")
+
+
+
+figfilename <- sprintf("results_figures/%s_%s_quant_forecasts.pdf",st_ab,tar_type)
+
+pdf(figfilename, width = 5, height = 3)
+a1 <- ggplot(fcasts_wide,aes(x = as.Date(target_end_date)))+
+    geom_line(aes(y=q0.5, color=forecast_date, group=forecast_date)) +
+    # geom_ribbon(aes(ymin=q0.1, ymax=q0.9, fill=forecast_date, group=forecast_date), alpha=.3) +
+    geom_ribbon(aes(ymin=q0.025, ymax=q0.975, fill=forecast_date, group=forecast_date), alpha=.3) +
+    geom_ribbon(aes(ymin=q0.25, ymax=q0.75, fill=forecast_date, group=forecast_date), alpha=.3) +
+    geom_point(aes(y=truth)) +
+    geom_line(aes(y=truth)) +
+    theme_bw() + xlab("Date") +
+    theme(legend.position = "none") + ylab(sprintf("cumulative %s",paste0(tar_type,"s"))) +
+    ggtitle(sprintf("Cumulative %s in %s, observed and forecasted",paste0(tar_type,"s"),st_ab))
+#+
+    # coord_cartesian(ylim=c(250, 2500))
+
+print(a1)
+dev.off()
+print(a1)
+
+
+
+}
+```
+
+
+
+
+```{r}
+
+forecasted_locations = unique(forecasts_with_truth$location)
+
+tar_type = "death"
+
+for (loc in forecasted_locations){
+
+state_num = loc #"04"
+
+target_forecasts_with_truth <-
+  forecasts_with_truth[grepl(tar_type,
+                             forecasts_with_truth$target) &
+                         (forecasts_with_truth$location == state_num)&
+                         as.Date(forecasts_with_truth$forecast_date)
+                       >as.Date('2020-04-10'),]
+
+
+st_ab = fips(state_num,to="Abbreviation")
+
+if (loc == "US"){
+  st_ab = "US"
+}
+fcasts_wide <- as_tibble(target_forecasts_with_truth) %>%
+    filter(quantile %in% c(0.025, 0.1, 0.25, 0.5, 0.75, 0.9, 0.975)) %>%
+    mutate(week_ahead = as.numeric(substr(target, 0,2))) %>%
+    pivot_wider(names_from = quantile, names_prefix="q")
+
+
+
+figfilename <- sprintf("results_figures/%s_%s_quant_forecasts.pdf",st_ab,tar_type)
+
+pdf(figfilename, width = 5, height = 3)
+a1 <- ggplot(fcasts_wide,aes(x = as.Date(target_end_date)))+
+    geom_line(aes(y=q0.5, color=forecast_date, group=forecast_date)) +
+    # geom_ribbon(aes(ymin=q0.1, ymax=q0.9, fill=forecast_date, group=forecast_date), alpha=.3) +
+    geom_ribbon(aes(ymin=q0.025, ymax=q0.975, fill=forecast_date, group=forecast_date), alpha=.3) +
+    geom_ribbon(aes(ymin=q0.25, ymax=q0.75, fill=forecast_date, group=forecast_date), alpha=.3) +
+    geom_point(aes(y=truth)) +
+    geom_line(aes(y=truth)) +
+    theme_bw() + xlab("Date") +
+    theme(legend.position = "none") + ylab(sprintf("cumulative %s",paste0(tar_type,"s"))) +
+    ggtitle(sprintf("Cumulative %s in %s, observed and forecasted",paste0(tar_type,"s"),st_ab))
+#+
+    # coord_cartesian(ylim=c(250, 2500))
+
+print(a1)
+dev.off()
+print(a1)
+
+
+
+}
+```
+
+
+
+
+
+
+
+```{r}
+
+get_calibration_prop <- function(forecasts_with_truth,alpha_level,conditions,target_type="death"){
+  forecast_sub0 <- forecasts_with_truth[grepl(target_type,forecasts_with_truth$target),]
+  forecast_subset <- subset(forecast_sub0,eval(conditions))
+  lbounds = subset(forecast_subset,quantile==alpha_level/2,select="value")$value
+  ubounds =  subset(forecast_subset,quantile==1 - alpha_level/2,select="value")$value
+  truth =  subset(forecast_subset,quantile==0.5,select = "truth")$truth
+
+
+  in_bounds <- ((ubounds - truth)>=0) & ((lbounds-truth)<=0)
+
+  prop = sum(in_bounds)/length(truth)
+
+  check_df <- cbind(lbounds,ubounds,truth,in_bounds)
+
+
+  return(prop)
+
+}
+
+
+
+
+```
+
+### Calibration figures
+
+```{r US-calibration-cases}
+
+for (i in 1:4){
+
+curr_loc = "US"
+
+cond_target = sprintf("%s wk ahead cum case",i)
+condition = expression((target==cond_target)&(location=="US"))
+tar_type = "case"
+# title_text <- paste(curr_loc,"-",tar_type)
+title_text <- sprintf("US - %s week ahead cumulative cases",i)
+
+
+
+curr_loc_fips = fips(curr_loc)
+if (curr_loc == "US"){
+ curr_loc_fips = "US"
+}
+if (curr_loc_fips < 10){
+  curr_loc_fips = paste0(0,curr_loc_fips)
+}else{curr_loc_fips = as.character(curr_loc_fips)}
+
+# condition = expression((location==curr_loc_fips))
+
+all_props <- c()
+all_CI_widths <- 1-c(0.02,0.05,0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9)
+
+for (j in 1:length(all_CI_widths)){
+  curr_a_level = round(1 - all_CI_widths[j],3)
+  # curr_prop <- get_calibration_prop(forecasts_with_truth,curr_a_level,
+  #                                   expression((location == curr_loc_fips)),"case")
+  curr_prop <- get_calibration_prop(forecasts_with_truth,curr_a_level,
+                                    condition,tar_type)
+  all_props <- c(all_props,curr_prop)
+}
+
+
+calib_df <- data.frame(exp_prop = all_CI_widths,act_prop = all_props)
+
+
+figfilename_calibration <- sprintf("results_figures/US_%swkaheadcases_calibration.pdf",i)
+
+pdf(figfilename_calibration, width = 5, height = 3)
+a3 <- ggplot(data=calib_df)+
+  geom_point(mapping=aes(x=exp_prop,y=act_prop))+
+  geom_abline(slope=1,intercept=0)+
+  xlim(c(0,1))+ylim(c(0,1))+
+  xlab("Expected Proportion")+
+  ylab("Actual Proportion")+
+  ggtitle(title_text)
+print(a3)
+dev.off()
+}
+```
+
+
+
+```{r State-calibration-cases}
+
+for (i in 1:4){
+
+
+
+cond_target = sprintf("%s wk ahead cum case",i)
+condition = expression((target==cond_target)&(location!="US"))
+tar_type = "case"
+# title_text <- paste(curr_loc,"-",tar_type)
+title_text <- sprintf("State-level - %s week ahead cumulative cases",i)
+
+
+
+all_props <- c()
+all_CI_widths <- 1-c(0.02,0.05,0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9)
+
+for (j in 1:length(all_CI_widths)){
+  curr_a_level = round(1 - all_CI_widths[j],3)
+  # curr_prop <- get_calibration_prop(forecasts_with_truth,curr_a_level,
+  #                                   expression((location == curr_loc_fips)),"case")
+  curr_prop <- get_calibration_prop(forecasts_with_truth,curr_a_level,
+                                    condition,tar_type)
+  all_props <- c(all_props,curr_prop)
+}
+
+
+calib_df <- data.frame(exp_prop = all_CI_widths,act_prop = all_props)
+
+
+figfilename_calibration <- sprintf("results_figures/state-level_%swkaheadcases_calibration.pdf",i)
+
+pdf(figfilename_calibration, width = 5, height = 3)
+a3 <- ggplot(data=calib_df)+
+  geom_point(mapping=aes(x=exp_prop,y=act_prop))+
+  geom_abline(slope=1,intercept=0)+
+  xlim(c(0,1))+ylim(c(0,1))+
+  xlab("Expected Proportion")+
+  ylab("Actual Proportion")+
+  ggtitle(title_text)
+print(a3)
+dev.off()
+}
+```
+
+
+```{r US-calibration-deaths}
+
+for (i in 1:4){
+
+curr_loc = "US"
+
+cond_target = sprintf("%s wk ahead cum death",i)
+condition = expression((target==cond_target)&(location=="US"))
+tar_type = "death"
+# title_text <- paste(curr_loc,"-",tar_type)
+title_text <- sprintf("US - %s week ahead cumulative deaths",i)
+
+
+
+curr_loc_fips = fips(curr_loc)
+if (curr_loc == "US"){
+ curr_loc_fips = "US"
+}
+if (curr_loc_fips < 10){
+  curr_loc_fips = paste0(0,curr_loc_fips)
+}else{curr_loc_fips = as.character(curr_loc_fips)}
+
+# condition = expression((location==curr_loc_fips))
+
+all_props <- c()
+all_CI_widths <- 1-c(0.02,0.05,0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9)
+
+for (j in 1:length(all_CI_widths)){
+  curr_a_level = round(1 - all_CI_widths[j],3)
+  # curr_prop <- get_calibration_prop(forecasts_with_truth,curr_a_level,
+  #                                   expression((location == curr_loc_fips)),"case")
+  curr_prop <- get_calibration_prop(forecasts_with_truth,curr_a_level,
+                                    condition,tar_type)
+  all_props <- c(all_props,curr_prop)
+}
+
+
+calib_df <- data.frame(exp_prop = all_CI_widths,act_prop = all_props)
+
+
+figfilename_calibration <- sprintf("results_figures/US_%swkaheaddeaths_calibration.pdf",i)
+
+pdf(figfilename_calibration, width = 5, height = 3)
+a3 <- ggplot(data=calib_df)+
+  geom_point(mapping=aes(x=exp_prop,y=act_prop))+
+  geom_abline(slope=1,intercept=0)+
+  xlim(c(0,1))+ylim(c(0,1))+
+  xlab("Expected Proportion")+
+  ylab("Actual Proportion")+
+  ggtitle(title_text)
+print(a3)
+dev.off()
+}
+```
+
+
+
+```{r State-calibration-deaths}
+
+for (i in 1:4){
+
+
+
+cond_target = sprintf("%s wk ahead cum death",i)
+condition = expression((target==cond_target)&(location!="US"))
+tar_type = "death"
+# title_text <- paste(curr_loc,"-",tar_type)
+title_text <- sprintf("State-level - %s week ahead cumulative deaths",i)
+
+
+
+all_props <- c()
+all_CI_widths <- 1-c(0.02,0.05,0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9)
+
+for (j in 1:length(all_CI_widths)){
+  curr_a_level = round(1 - all_CI_widths[j],3)
+  # curr_prop <- get_calibration_prop(forecasts_with_truth,curr_a_level,
+  #                                   expression((location == curr_loc_fips)),"case")
+  curr_prop <- get_calibration_prop(forecasts_with_truth,curr_a_level,
+                                    condition,tar_type)
+  all_props <- c(all_props,curr_prop)
+}
+
+
+calib_df <- data.frame(exp_prop = all_CI_widths,act_prop = all_props)
+
+
+figfilename_calibration <- sprintf("results_figures/state-level_%swkaheaddeaths_calibration.pdf",i)
+
+pdf(figfilename_calibration, width = 5, height = 3)
+a3 <- ggplot(data=calib_df)+
+  geom_point(mapping=aes(x=exp_prop,y=act_prop))+
+  geom_abline(slope=1,intercept=0)+
+  xlim(c(0,1))+ylim(c(0,1))+
+  xlab("Expected Proportion")+
+  ylab("Actual Proportion")+
+  ggtitle(title_text)
+print(a3)
+dev.off()
+}
+```
+
+
+
+
+
+
+```{r combined-US-State-calibration-deaths}
+
+
+calib_df <- data.frame()
+
+for (i in 1:4){
+
+
+
+cond_target = sprintf("%s wk ahead cum death",i)
+condition1 = expression((target==cond_target)&(location!="US"))
+condition2 = expression((target==cond_target)&(location=="US"))
+tar_type = "death"
+# title_text <- paste(curr_loc,"-",tar_type)
+title_text <- sprintf("%s week ahead",i)
+
+
+
+all_props1 <- c()
+all_props2 <- c()
+all_CI_widths <- 1-c(0.02,0.05,0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9)
+
+for (j in 1:length(all_CI_widths)){
+  curr_a_level = round(1 - all_CI_widths[j],3)
+  # curr_prop <- get_calibration_prop(forecasts_with_truth,curr_a_level,
+  #                                   expression((location == curr_loc_fips)),"case")
+  curr_prop1 <- get_calibration_prop(forecasts_with_truth,curr_a_level,
+                                    condition1,tar_type)
+  all_props1 <- c(all_props1,curr_prop1)
+  
+  curr_prop2 <- get_calibration_prop(forecasts_with_truth,curr_a_level,
+                                    condition2,tar_type)
+  all_props2 <- c(all_props2,curr_prop2)
+}
+
+
+temp1 <- data.frame(exp_prop = all_CI_widths,act_prop = all_props1,level="state",target=title_text)
+temp2 <- data.frame(exp_prop = all_CI_widths,act_prop = all_props2,level="US",target=title_text)
+calib_df <- rbind(calib_df,temp1,temp2)
+
+}
+
+figfilename_calibration <- sprintf("results_figures/deaths_calibration.pdf",i)
+
+pdf(figfilename_calibration, width = 7, height = 4)
+a3 <- ggplot(data=calib_df)+
+  geom_point(mapping=aes(x=exp_prop,y=act_prop,shape=level,color=level),cex=1.5)+
+  # geom_point(mapping=aes(x=exp_prop,y=us_prop,shape="b"),shape=19)+
+  geom_abline(slope=1,intercept=0)+
+  xlim(c(0,1))+ylim(c(0,1))+
+  xlab("Expected Proportion")+
+  ylab("Actual Proportion")+
+  ggtitle("PI Capture Rates for Cumulative Death Forecasts")+
+  facet_wrap(facets=vars(target),nrow=2)
+
+print(a3)
+dev.off()
+print(a3)
+
+```
+
+
+
+
+```{r combined-US-State-calibration-cases}
+
+
+
+calib_df <- data.frame()
+
+for (i in 1:4){
+
+
+
+cond_target = sprintf("%s wk ahead cum case",i)
+condition1 = expression((target==cond_target)&(location!="US"))
+condition2 = expression((target==cond_target)&(location=="US"))
+tar_type = "case"
+# title_text <- paste(curr_loc,"-",tar_type)
+title_text <- sprintf("%s week ahead",i)
+
+
+
+all_props1 <- c()
+all_props2 <- c()
+all_CI_widths <- 1-c(0.02,0.05,0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9)
+
+for (j in 1:length(all_CI_widths)){
+  curr_a_level = round(1 - all_CI_widths[j],3)
+  # curr_prop <- get_calibration_prop(forecasts_with_truth,curr_a_level,
+  #                                   expression((location == curr_loc_fips)),"case")
+  curr_prop1 <- get_calibration_prop(forecasts_with_truth,curr_a_level,
+                                    condition1,tar_type)
+  all_props1 <- c(all_props1,curr_prop1)
+  
+  curr_prop2 <- get_calibration_prop(forecasts_with_truth,curr_a_level,
+                                    condition2,tar_type)
+  all_props2 <- c(all_props2,curr_prop2)
+}
+
+
+temp1 <- data.frame(exp_prop = all_CI_widths,act_prop = all_props1,level="state",target=title_text)
+temp2 <- data.frame(exp_prop = all_CI_widths,act_prop = all_props2,level="US",target=title_text)
+calib_df <- rbind(calib_df,temp1,temp2)
+
+}
+
+figfilename_calibration <- sprintf("results_figures/cases_calibration.pdf",i)
+
+pdf(figfilename_calibration, width = 7, height = 4)
+a3 <- ggplot(data=calib_df)+
+  geom_point(mapping=aes(x=exp_prop,y=act_prop,shape=level,color=level),cex=1.5)+
+  # geom_point(mapping=aes(x=exp_prop,y=us_prop,shape="b"),shape=19)+
+  geom_abline(slope=1,intercept=0)+
+  xlim(c(0,1))+ylim(c(0,1))+
+  xlab("Expected Proportion")+
+  ylab("Actual Proportion")+
+  ggtitle("PI Capture Rates for Cumulative Case Forecasts")+
+  facet_wrap(facets=vars(target),nrow=2)
+
+print(a3)
+dev.off()
+print(a3)
+
+```
